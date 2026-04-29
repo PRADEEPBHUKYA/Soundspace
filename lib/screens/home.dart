@@ -54,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             children:[
               RoomTab(onSetup:_openSetup),
               const EQPanel(),
-              SettingsTab(onSetup:_openSetup),
+              const SettingsTab(),
             ],
           )),
         ])),
