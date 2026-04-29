@@ -131,7 +131,7 @@ class _Slider extends StatelessWidget {
       ]),
       const SizedBox(height:6),
       SliderTheme(data:SliderThemeData(
-        trackHeight:3,thumbRadius:8,
+        trackHeight:3,
         activeTrackColor:SS.cyan,inactiveTrackColor:SS.border,thumbColor:Colors.white,
         overlayShape:SliderComponentShape.noOverlay),
         child:Slider(value:value,min:min,max:max,onChanged:(v){ HapticFeedback.selectionClick(); onChange(v); })),
