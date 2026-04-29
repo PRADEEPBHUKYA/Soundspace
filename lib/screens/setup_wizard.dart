@@ -1,137 +1,91 @@
-import 'dart:async';
-import 'dart:math' as math;
-import 'package:flutter/foundation.dart';
-import 'package:just_audio/just_audio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../models/models.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../theme/theme.dart';
 
-class AudioProvider extends ChangeNotifier {
-  final List<SoundSource> sources = SoundSource.defaults();
-  int selectedIndex = 2;
-  SoundSource get selected => sources[selectedIndex];
+class SetupWizard extends StatelessWidget {
+  const SetupWizard({super.key});
 
-  double roomSize = 0.40, stereoWidth = 0.80, masterVol = 0.85;
-  List<double> eqBands = List.filled(5, 0.0);
-  String? activePreset = 'Flat';
-  bool rotationOn = false, reverbOn = true;
-  double rotSpeed = 0.18;
-  bool capturing = false;
+  static const _adb =
+      'adb shell pm grant com.example.soundspace android.permission.CAPTURE_AUDIO_OUTPUT';
 
-  final _player = AudioPlayer();
-  bool playing = false;
-  Timer? _rotTimer;
-  double _rotAngle = 0;
-  static const _rotRadius = 0.36;
-
-  AudioProvider() {
-    _player.playerStateStream.listen((s) { playing = s.playing; notifyListeners(); });
-    _load();
+  @override Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: SS.bg,
+      appBar: AppBar(backgroundColor:Colors.transparent,
+        title:const Text('Enable System Capture',
+          style:TextStyle(fontSize:17, fontWeight:FontWeight.w600)),
+        leading:IconButton(icon:const Icon(Icons.close_rounded, color:SS.t2),
+          onPressed:()=>Navigator.pop(context))),
+      body: SafeArea(child: SingleChildScrollView(
+        padding:const EdgeInsets.all(28),
+        child:Column(children:[
+          const SizedBox(height:16),
+          Container(width:96, height:96,
+            decoration:BoxDecoration(color:SS.cyan.withOpacity(.1), shape:BoxShape.circle,
+              border:Border.all(color:SS.cyan.withOpacity(.3), width:2)),
+            child:const Icon(Icons.verified_user_rounded, size:48, color:SS.cyan)),
+          const SizedBox(height:24),
+          const Text('One ADB Command', textAlign:TextAlign.center,
+            style:TextStyle(fontSize:22, fontWeight:FontWeight.w700, color:SS.t1)),
+          const SizedBox(height:10),
+          const Text(
+            'To spatialize audio from all apps, run this command from your PC.',
+            textAlign:TextAlign.center,
+            style:TextStyle(color:SS.t2, fontSize:15, height:1.55)),
+          const SizedBox(height:24),
+          _Step('1', 'Enable USB Debugging',
+            'Settings > About Phone > tap Build Number 7 times', SS.cyan),
+          const SizedBox(height:10),
+          _Step('2', 'Download ADB Platform Tools',
+            'developer.android.com/tools/releases/platform-tools', SS.amber),
+          const SizedBox(height:10),
+          _Step('3', 'Run the command below', '', SS.green),
+          const SizedBox(height:10),
+          Container(width:double.infinity, padding:const EdgeInsets.all(16),
+            decoration:BoxDecoration(color:Colors.black54, borderRadius:BorderRadius.circular(16),
+              border:Border.all(color:SS.cyan.withOpacity(.25))),
+            child:Column(crossAxisAlignment:CrossAxisAlignment.start, children:[
+              const Text('COMMAND', style:TextStyle(color:SS.cyan, fontSize:9, fontWeight:FontWeight.w700, letterSpacing:1.5)),
+              const SizedBox(height:8),
+              const SelectableText(_adb,
+                style:TextStyle(color:SS.t1, fontSize:11, fontFamily:'monospace', height:1.6)),
+              const SizedBox(height:8),
+              GestureDetector(
+                onTap:(){ Clipboard.setData(const ClipboardData(text:_adb));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content:Text('Copied!'), duration:Duration(seconds:1)));},
+                child:const Row(children:[
+                  Icon(Icons.copy_rounded, size:13, color:SS.cyan),
+                  SizedBox(width:4),
+                  Text('Copy', style:TextStyle(color:SS.cyan, fontSize:11, fontWeight:FontWeight.w600))])),
+            ])),
+          const SizedBox(height:24),
+          SizedBox(width:double.infinity, height:52,
+            child:ElevatedButton(
+              onPressed:()=>Navigator.pop(context),
+              style:ElevatedButton.styleFrom(backgroundColor:SS.cyan, foregroundColor:Colors.black,
+                shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16))),
+              child:const Text('Got it', style:TextStyle(fontWeight:FontWeight.w700, fontSize:16)))),
+        ]),
+      )),
+    );
   }
+}
 
-  Future<void> _load() async {
-    try {
-      final p = await SharedPreferences.getInstance();
-      roomSize = p.getDouble('roomSize') ?? 0.40;
-      stereoWidth = p.getDouble('stereoWidth') ?? 0.80;
-      masterVol = p.getDouble('masterVol') ?? 0.85;
-      rotationOn = p.getBool('rotation') ?? false;
-      reverbOn = p.getBool('reverb') ?? true;
-      rotSpeed = p.getDouble('rotSpeed') ?? 0.18;
-      activePreset = p.getString('preset') ?? 'Flat';
-      final b = p.getStringList('eq');
-      if (b != null && b.length == 5) eqBands = b.map(double.parse).toList();
-      if (rotationOn) _startRotation();
-    } catch (e) { debugPrint('Load error: $e'); }
-    notifyListeners();
-  }
-
-  Future<void> _save() async {
-    try {
-      final p = await SharedPreferences.getInstance();
-      await p.setDouble('roomSize', roomSize);
-      await p.setDouble('stereoWidth', stereoWidth);
-      await p.setDouble('masterVol', masterVol);
-      await p.setBool('rotation', rotationOn);
-      await p.setBool('reverb', reverbOn);
-      await p.setDouble('rotSpeed', rotSpeed);
-      if (activePreset != null) await p.setString('preset', activePreset!);
-      await p.setStringList('eq', eqBands.map((e) => e.toString()).toList());
-    } catch (e) { debugPrint('Save error: $e'); }
-  }
-
-  void selectSource(int i) { selectedIndex = i; notifyListeners(); }
-
-  void moveSource(Offset pos) {
-    sources[selectedIndex] = sources[selectedIndex].clone(
-      pos: Offset(pos.dx.clamp(0.03, 0.97), pos.dy.clamp(0.03, 0.97)));
-    _applyPan(); notifyListeners();
-  }
-
-  void setGain(int i, double g) { sources[i] = sources[i].clone(gain: g.clamp(0,1.5)); _applyPan(); notifyListeners(); }
-  void toggleMute(int i) { sources[i] = sources[i].clone(muted: !sources[i].muted); _applyPan(); notifyListeners(); }
-  void toggleSolo(int i) {
-    final was = sources[i].soloed;
-    for (var k = 0; k < sources.length; k++) sources[k] = sources[k].clone(soloed: false);
-    if (!was) sources[i] = sources[i].clone(soloed: true);
-    _applyPan(); notifyListeners();
-  }
-
-  void setRoomSize(double v)    { roomSize = v.clamp(0,1); _save(); notifyListeners(); }
-  void setStereoWidth(double v) { stereoWidth = v.clamp(0,1); _save(); notifyListeners(); }
-  void setMasterVol(double v)   { masterVol = v.clamp(0,1); _player.setVolume(_vol); notifyListeners(); }
-
-  void setEQBand(int i, double dB) { eqBands[i] = dB.clamp(-12,12); activePreset = null; _save(); notifyListeners(); }
-  void applyPreset(EQPreset p) { eqBands = List.from(p.bands); activePreset = p.name; _save(); notifyListeners(); }
-  void resetEQ() { eqBands = List.filled(5, 0.0); activePreset = 'Flat'; _save(); notifyListeners(); }
-
-  void toggleRotation() { rotationOn = !rotationOn; rotationOn ? _startRotation() : _stopRotation(); _save(); notifyListeners(); }
-  void setRotSpeed(double v) { rotSpeed = v.clamp(0.05, 2.0); _save(); notifyListeners(); }
-  void toggleReverb() { reverbOn = !reverbOn; _save(); notifyListeners(); }
-
-  void _startRotation() {
-    _rotTimer?.cancel();
-    DateTime last = DateTime.now();
-    _rotTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      final now = DateTime.now();
-      final dt = now.difference(last).inMicroseconds / 1e6;
-      last = now;
-      _rotAngle = (_rotAngle + rotSpeed * 2 * math.pi * dt) % (2 * math.pi);
-      for (var k = 0; k < sources.length; k++) {
-        final a = _rotAngle + k * math.pi / 2;
-        sources[k] = sources[k].clone(pos: Offset(
-          (0.5 + _rotRadius * math.cos(a)).clamp(0.05, 0.95),
-          (0.5 + _rotRadius * math.sin(a)).clamp(0.05, 0.95),
-        ));
-      }
-      _applyPan(); notifyListeners();
-    });
-  }
-
-  void _stopRotation() { _rotTimer?.cancel(); _rotTimer = null; }
-
-  void _applyPan() { _player.setVolume(_vol); }
-
-  double get _vol {
-    final active = sources.where((s) => !s.muted);
-    if (active.isEmpty) return 0;
-    final avgY = active.map((s) => s.pos.dy).reduce((a,b) => a+b) / active.length;
-    return ((0.4 + (1-avgY)*0.6)*masterVol).clamp(0.0,1.0);
-  }
-
-  Future<void> togglePlay() async {
-    if (playing) {
-      await _player.stop(); playing = false; notifyListeners();
-    } else {
-      try {
-        await _player.setUrl('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
-        await _player.setVolume(_vol); await _player.play();
-      } catch (e) { debugPrint('Play error: $e'); }
-    }
-  }
-
-  Future<void> startCapture() async { capturing = true; notifyListeners(); }
-  Future<void> stopCapture() async { capturing = false; notifyListeners(); }
-
-  @override
-  void dispose() { _rotTimer?.cancel(); _player.dispose(); super.dispose(); }
+class _Step extends StatelessWidget {
+  final String num, title, sub; final Color color;
+  const _Step(this.num, this.title, this.sub, this.color);
+  @override Widget build(_) => Container(
+    padding:const EdgeInsets.all(14),
+    decoration:BoxDecoration(color:SS.raised, borderRadius:BorderRadius.circular(14), border:Border.all(color:SS.border)),
+    child:Row(crossAxisAlignment:CrossAxisAlignment.start, children:[
+      Container(width:24, height:24, decoration:BoxDecoration(color:color.withOpacity(.15), shape:BoxShape.circle),
+        child:Center(child:Text(num, style:TextStyle(color:color, fontSize:12, fontWeight:FontWeight.w700)))),
+      const SizedBox(width:12),
+      Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start, children:[
+        Text(title, style:const TextStyle(color:SS.t1, fontSize:13, fontWeight:FontWeight.w600)),
+        if(sub.isNotEmpty)...[const SizedBox(height:3),
+          Text(sub, style:const TextStyle(color:SS.t2, fontSize:11, height:1.5))],
+      ])),
+    ]));
 }
